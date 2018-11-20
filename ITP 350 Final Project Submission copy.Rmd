@@ -1,0 +1,296 @@
+---
+title: "ITP 350 Final Project"
+author: "Evan Celaya, Racquel Fygenson"
+date: "4/28/2018"
+output: html_document 
+---
+
+```{r setup, include=FALSE}
+safetyMathBOTH <- read.csv("~/Desktop/safetyMathBOTH.csv")
+safetyMath14 <- read.csv("~/Desktop/safetyMath14.csv")
+safetyMath15 <- read.csv("~/Desktop/safetyMath15.csv")
+library(ggplot2)
+library(grid)
+library(gridExtra)
+library(dplyr)
+library(rgdal)
+library(rpart)
+library(rpart.plot)
+library(ape)
+library(factoextra)
+library(knitr)
+```
+
+## The Question
+Is the amount of crimes at one's school in New York City correlated with the student's scores on the State Mathematics Exam?
+
+## Data Overview
+We started with a safety data set of 4,241 observations for 33 variables, and a math data set of 161,403 observations for 17 variables. Both data sets had New York City schools as their observations, and were from the same source (the New York City Local Government) so they had DBNs (a.k.a. unique numbers for each school) that corresponded. We began by looking for an overlap in our two data sets so that we could cut down
+the number of observations. We found that both data set had records for years 2014 and 2015, 
+so we reduced our observations to include only data from those years. 
+
+```{r Math Select, eval=FALSE}
+safety <- X2010_2016_School_Safety_Report
+math <- X2013_2015_New_York_State_Mathematics_Exam_by_School
+
+safety$`School Year`[safety$`School Year` == "2013-14"] <- "2014"
+safety$`School Year`[safety$`School Year` == "2014-15"] <- "2015"
+#only take years 2014, 2015, because 2016 isn't available in the safety data we're combining
+safetyMerge <- dplyr::filter(safety, `School Year`=="2014" | `School Year`=="2015")
+
+#get rid of all entries but the aggregate student scores per school
+mathMerge <- dplyr::filter(math, `Grade` == "All Grades")
+mathMerge <- dplyr::filter(mathMerge, Category=="All Students")
+mathMerge <- dplyr::filter(mathMerge, Year == "2014" | Year == "2015")
+```
+
+Next we looked at all the variables available to us, and decide to look 
+into the correlation between mean school score, and crime numbers. We also held on to 
+location data (Borough Name, Longitude, Latitude, School district), and the levels of the Math
+exam that were taken. 
+
+Source: Local NYC Government: 
+
+https://catalog.data.gov/dataset/new-york-state-mathematics-exam-by-school 
+
+https://catalog.data.gov/dataset/school-safety-report-8067a
+
+## Cleaning the Data
+One of the hardest part of cleaning out data was that the safety data set was organized by LOCATION and not by SCHOOL NAME. The NYC Local Government, who provided the data set,explained that this was the case because some locations are shared by multiple schools, so whenever a crime occurs at one of those locations, it affects ALL of the schools at that location and should be logged accordingly. This means that the safety data set was full of "N/A" and "# N/A" wherever a consolidated location was a problem. It looked a little like this:
+
+![](image2.png)
+
+Where three schools that shared the same location were logged 6 times (twice for each school: once for 2014, once for 2015) without any crime data, and the crime data for all those schools was logged under the same 'Building Name' variable.
+
+In order to clean this data, we had to separate it into 2 data frames: one of only the consolidated locations and one of only the school names, without extra observations standing for the consolidated data. Then we had to separate these two data frames by year (2014, and 2015). 
+
+![](image1.png)
+
+Next we joined the consolidated data for 2014 (yellow) with the correct school names for 2014 (purple), and did the same for 2015. Next we had to copy over the consolidated data's crime rates to the individual school names it correlated with, and finally rbind the 2014 and 2015 years back together, deleting duplicate rows
+
+![](image3.png)
+
+We reduced the dimensions of the Safety data set to 3565 observations of 29 variables, and the dimensions of the Math data set to 2250 observations of 10 variables, before merging the two data sets to have a final data frame of 2250 observations of 42 variables. Before the final step, we rename the columns so we can work with them more easily within R.
+
+```{r Rename, eval=FALSE}
+safetyMathBOTH <- rename(safetyMathBOTH, NumTested = `Number Tested`, MeanScaleScore = `Mean Scale Score`, Level1p = `% Level 1`, Level2p = `% Level 2`,Level3p = `% Level 3`, Level4p = `% Level 4`, Level34p = `% Level 3+4`,SchoolYear = `School Year.x`, LocationName = `Location Name.x`, NumStudents = `NumberStudents.x`, NumSchools = `# Schools.x`, SchoolsInBuilding = `Schools in Building.x`, MajorN = `Major N.x`,OthN = `Oth N.x`, NoCrimN = `NoCrim N.x`, PropN = `Prop N.x`, VioN = `Vio N.x`,GroupNameOfPop = `GroupNameofPop.x`, BuildingPop = `BuildingPopulation.x`, AvgMajor =`AvgOfMajor N.x`, AvgOth = `AvgOfOth N.x`, AvgNoCrim = `AvgOfNoCrim N.x`, AvgPop = `AvgOfProp N.x`, AvgVio = `AvgOfVio N.x`,BoroughName = `Borough Name.x`, Postcode = `Postcode.x`, Latitude = `Latitude.x`,Longitude = `Longitude.x`,CommunityBoard = `Community Board.x`, CouncilDistrict = `Council District.x`, NTA=`NTA.x`)
+```
+
+After making the data frame, we had ensure that all of our variables were numeric in order to perform mathematical analyses on them. 
+
+```{r Numeric}
+safetyMathBOTH$MajorN <- as.numeric(safetyMathBOTH$MajorN)
+safetyMathBOTH$OthN <- as.numeric(safetyMathBOTH$OthN)
+safetyMathBOTH$NoCrimN <- as.numeric(safetyMathBOTH$NoCrimN)
+safetyMathBOTH$PropN <- as.numeric(safetyMathBOTH$PropN)
+safetyMathBOTH$VioN <- as.numeric(safetyMathBOTH$VioN)
+safetyMathBOTH$NumSchools <- as.numeric(safetyMathBOTH$NumSchools)
+```
+
+We use this final data set previewed below for our analyses and graphs in this document. 
+
+```{r safteymathBOTH Head, echo=FALSE}
+kable(head(safetyMathBOTH[,1:5]))
+```
+
+## Summary Statistics
+
+
+### Distribution of Crime by Type
+
+We wanted to look at if there was variation in the different types of crime that schools experienced. We plotted box plots for each type of crime below.
+
+```{r Crime by Type Boxplot, echo=FALSE, warning=FALSE}
+multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
+  
+  # Make a list from the ... arguments and plotlist
+  plots <- c(list(...), plotlist)
+  
+  numPlots = length(plots)
+  
+  # If layout is NULL, then use 'cols' to determine layout
+  if (is.null(layout)) {
+    # Make the panel
+    # ncol: Number of columns of plots
+    # nrow: Number of rows needed, calculated from # of cols
+    layout <- matrix(seq(1, cols * ceiling(numPlots/cols)),
+                     ncol = cols, nrow = ceiling(numPlots/cols))
+  }
+  
+  if (numPlots==1) {
+    print(plots[[1]])
+    
+  } else {
+    # Set up the page
+    grid.newpage()
+    pushViewport(viewport(layout = grid.layout(nrow(layout), ncol(layout))))
+    
+    # Make each plot, in the correct location
+    for (i in 1:numPlots) {
+      # Get the i,j matrix positions of the regions that contain this subplot
+      matchidx <- as.data.frame(which(layout == i, arr.ind = TRUE))
+      
+      print(plots[[i]], vp = viewport(layout.pos.row = matchidx$row,
+                                      layout.pos.col = matchidx$col))
+    }
+  }
+}
+
+safeBase <- ggplot(safetyMathBOTH)
+major <-geom_boxplot(aes(x = "", y=MajorN),color="black", fill="red", alpha=0.2)
+property <- geom_boxplot(aes(x = "", y=PropN),color="black", fill="orange", alpha=0.2)
+violent <- geom_boxplot(aes(x = "", y=VioN),color="black", fill="yellow", alpha=0.2) 
+noncrim <- geom_boxplot(aes(x = "", y=NoCrimN),color="black", fill="green", alpha=0.2)
+other <- geom_boxplot(aes(x = "", y=OthN), color="black", fill="blue", alpha=0.2)
+multiplot(safeBase + major+ xlab("Major Crimes") + ylab("Number of Crimes"), safeBase + property+ xlab("Property Crimes")+ ylab("Number of Crimes"), safeBase + violent+xlab("Violent Crimes")+ ylab("Number of Crimes"), safeBase + noncrim+ xlab("Non-Criminal")+ ylab("Number of Crimes"), safeBase + other + xlab("Other Crimes")+ ylab("Number of Crimes"), cols=5)
+```
+
+
+Then, we realized to effectively compare the variables to one another, the dimensions for each plot had to be scaled equally.
+
+Scaled Box plots:
+
+```{r Crime by Type Boxplot Scaled Boxplots, echo=FALSE, warning=FALSE}
+multiplot(safeBase + major+ xlab("Major Crimes") + ylab("Number of Crimes") + coord_cartesian(ylim = c(0,45)), safeBase + property + xlab("Property Crimes") + ylab("Number of Crimes") + coord_cartesian(ylim = c(0,45)), safeBase + violent+xlab("Violent Crimes") + ylab("Number of Crimes") + coord_cartesian(ylim = c(0,45)), safeBase + noncrim+ xlab("Non-Criminal")+ ylab("Number of Crimes") + coord_cartesian(ylim = c(0,45)), safeBase + other + xlab("Other Crimes")+ ylab("Number of Crimes") + coord_cartesian(ylim = c(0,45)), cols=5)
+```
+
+As the plot shows, the median for Major Crimes and Violent Crimes is zero, with few outliers. Conversely, the median for Property and Non-Criminal crimes is around 1, but these have outliers with higher values (especially non-criminal). This plot shows that the number of crimes we are comparing the math exam scores to can be considered to be the less severe crimes a school experiences.
+
+
+### Score Distributions by Crime
+
+Next, we wanted to see how the distribution of crimes when it was dependent on the number of crimes. We categorized each school into being "Low Crime" or "High Crime" and plotted the distributions below.
+
+```{r Histograms Low & High Crime, echo=FALSE, warning=FALSE, message=FALSE}
+#mutate table
+safetyMathBOTH <- mutate(safetyMathBOTH, High.Low = ifelse(totCrime > 2.5, "High", "Low"))
+# plot high and low crime
+bothCrimeDist <- ggplot(data=subset(safetyMathBOTH,!is.na(High.Low)), aes((MeanScaleScore), fill=High.Low, color=High.Low)) + geom_histogram(position="identity", alpha=0.5) + xlab("Mean Scale Score") + ylab("Count") + labs(title = "Low and High Crime Data")
+# plot all crime
+allCrimeDist <- ggplot(data=safetyMathBOTH, aes(MeanScaleScore)) + geom_histogram(fill="orange", color="orange",alpha=0.5) + labs(title = "All Crime Data") + xlab("Mean Scale Score") + ylab("Count")
+# plot both
+multiplot(allCrimeDist,bothCrimeDist, cols=2)
+```
+
+From the plot, we can see the median of math exam scores of schools with High Crime (about 285) is lower than its Low Crime counterpart (about 305). The distribution for High Crime schools is skewed right, while schools with Low Crime appear to be more normally distributed. When looking at the plot of all crime together, we can see the schools with High Crime's impact on the distribution, but with the Low Crime schools evening the right end out.
+
+### Crime vs. Number of Schools per Location by Year
+```{r Linear Models 2014 & 2015, echo=FALSE, message=FALSE, warning=FALSE}
+NumSchoolTotCrime14 <- ggplot(safetyMath14, aes(NumSchools, totCrime)) + xlim(c(0, 8))+ geom_point(color="blue", alpha = 0.3) + geom_smooth(method="lm") + ylab("Total number of Crimes") + xlab("Number of Schools/Location") + labs(title="2014")
+NumSchoolTotCrime15 <- ggplot(safetyMath15, aes(NumSchools, totCrime)) +  xlim(c(0, 8))+ geom_point(color="red", alpha = 0.3)+ geom_smooth(method="lm", color="red")+ ylab("Total number of Crimes") + xlab("Number of Schools/Location") + labs(title="2015")
+multiplot(NumSchoolTotCrime14, NumSchoolTotCrime15,cols=2)
+```
+
+These plots show that the number of crimes increases with the number of schools in one location. This makes sense, because the crime data is organized so that all schools that share a location are affected by any crime that occurs in that location.
+
+### Crime vs. Score by Year
+
+We then do a plot comparing the total number of crimes to the math exam score for all schools in NYC. We split the plots below horizontally by the year (2014 is blue and 2015 is red), then vertically by inversely weighting each point by the number of buildings each school has.
+
+```{r Math vs Total Crime, echo=FALSE, warning=FALSE, message=FALSE}
+weight15 <- ggplot(safetyMath15, aes(totCrime, MeanScaleScore, size=(1/NumSchools))) + geom_point(aes(alpha=0.1), pch=21, fill="red") + geom_smooth(mapping = aes(weight = (1/NumSchools)), col="white") + geom_vline(xintercept=6, col="green", linetype="dashed") + xlab("Number of Crimes") + ylab("Scaled Math Scores")+ labs(title="Weighted 2015")+theme(legend.position="none")
+unweight15 <- ggplot(safetyMath15, aes(totCrime, MeanScaleScore)) + geom_point(aes(alpha=0.1), pch=21, fill="red") + geom_smooth(col="white") + geom_vline(xintercept=6, col="green", linetype="dashed") + xlab("Number of Crimes") + ylab("Scaled Math Scores")+ labs(title="Unweighted 2015")+theme(legend.position="none")
+
+weight14 <- ggplot(safetyMath14, aes(totCrime, MeanScaleScore, size=(1/NumSchools))) + geom_point(aes(alpha=0.1), pch=21, fill="blue") + geom_smooth(mapping = aes(weight = (1/NumSchools)), col="white") + geom_vline(xintercept=6, col="green", linetype="dashed") + xlab("Number of Crimes") + ylab("Scaled Math Scores")+ labs(title="Weighted 2014")+theme(legend.position="none")
+unweight14 <- ggplot(safetyMath14, aes(totCrime, MeanScaleScore)) + geom_point(aes(alpha=0.1), pch=21, fill="blue") + geom_smooth(col="white") + geom_vline(xintercept=6, col="green", linetype="dashed")+ xlab("Number of Crimes") + ylab("Scaled Math Scores")+ labs(title="Unweighted 2014")+ theme(legend.position="none")
+multiplot(unweight14, weight14, unweight15, weight15, cols=2)
+```
+
+As you can see, the impact of one or two crimes has an obvious negative correlation on low-crime schools’ math scores. On the other hand, as schools experience more crime, the impact of one or two extra crimes lessens and the math score results even out. Evidently, school that don’t usually experience crimes take a hit on their math exam results when crimes occur.
+
+## Spatial Data
+
+One reason we chose this data set is because it included the spatial data for each school. Having never worked with the software to do so, this package in R allowed us to broaden our understanding and learn a valuable new skill.
+
+### Map of Schools by Mean Math Score 
+In the first map, we plotted all of the schools in NYC and colored each point based off of the school's mean math exam score. With blue being the highest and red being the lowest, an interesting trend appeared from the plot. There seems to be two distinct areas in which the schools are clustered, most of which have low mean math exam scores. The schools with the highest scores however, seem to be on the fringes of the highly dense areas, stretching horizontally at a 210000 latitude.
+
+```{r Map,echo=FALSE,message=FALSE, warning=FALSE}
+counties<-readOGR(dsn="nysd_18a/nysd.shp", layer="nysd")
+safetyMathBOTHdf <- as.data.frame(safetyMathBOTH)
+safetyMathBOTHdf <- na.omit(safetyMathBOTHdf)
+coordinates(safetyMathBOTHdf)<-~Longitude+Latitude
+
+proj4string(safetyMathBOTHdf) <- CRS("+proj=longlat +datum=NAD83")
+safetyMathBOTHdf<-spTransform(safetyMathBOTHdf,proj4string(counties))
+
+safetyMathBOTHdf <-data.frame(safetyMathBOTHdf)
+
+NYC <- ggplot() +geom_polygon(data=counties, aes(x=long, y=lat, group=group))
+
+scoress <- geom_point(data=safetyMathBOTHdf, aes(x=Longitude, y=Latitude, color = MeanScaleScore))
+crimess <- geom_point(data=safetyMathBOTHdf, aes(x=Longitude, y=Latitude, size = totCrime/2, fill="white"), pch=21, color="red")
+
+scoreNY <- NYC + scoress + scale_colour_gradient2(low ="red", mid = "white", high = "blue", midpoint = 310, space = "Lab", na.value = "grey50", guide = "colourbar")
+
+crimeNY <- NYC + crimess 
+scoreNY
+```
+
+### Map of Schools by Number of Total Crimes 
+
+The second map illustrates number of crimes in every school by location. Remembering the first map, which illustrated that schools that were less closely packed together (coincidentally in high-income areas like the Upper East Side of Manhattan) tended to have the highest Math exam scores, we can see that these same high-scoring school also had relatively low crime rates. This correlation supports our past observations that crime rate and math exam scores are correlated.
+
+```{r Map 2, echo=FALSE,message=FALSE, warning=FALSE}
+crimeNY
+```
+
+#### Mean Squared Error
+
+To show that a linear model is not the best way to approximate the relationship between the math scores and number of crimes for a school, we calculate the SSE and MSE.
+```{r MSE}
+lm <- lm(MeanScaleScore~totCrime,safetyMathBOTH)
+sm<-summary(lm)
+sm
+# Sum of squared error is:
+sum(sm$residuals^2)
+# Mean of squared error is
+mean(sm$residuals^2)
+```
+As shown, these values are incredibly large, and with such a small r-squared we can determine that this a poor model for estimating the exam scores based on crime. 
+
+## Learning Model
+### Regression Tree
+
+Because the linear model based on the two variables had was not a good fit, we can run a regression tree analysis to predict the math exam scores for the numeric variables in our data set below:
+
+```{r Regression Tree, echo=FALSE}
+allfit <- rpart(MeanScaleScore ~ Year + NumStudents + NumSchools + totCrime + NumTested
+                + MajorN + OthN + PropN + VioN, method="anova", data=safetyMathBOTH)
+# plot tree
+rpart.plot(allfit, uniform=TRUE, main="Regression Tree for Mean Scale Score ")
+```
+
+From this tree, we can see that the main predictor for the Mean Scale score is the total Number of crimes at a school. Then, the next indicator is actually the number of students, something we had not thought about before performing this analysis. 
+
+
+### k-Means Clustering
+
+We also wanted to look into unsupervised learning models to see if any of trends we did not expect from the data arose. We settled on doing a k-means clustering, which allowed us to group the different schools based on numeric variables we chose below.
+
+```{r Saftey Numbers, echo=FALSE}
+safetynumbers <- select(safetyMathBOTH, MeanScaleScore, Year, NumTested, 
+                        NumSchools, NumStudents, totCrime)
+safetynumbers <- na.omit(safetynumbers)
+kable(head(safetynumbers))
+```
+
+####Finding Ideal Number of Clusters
+
+```{r Elbow Method, echo=FALSE}
+# find idealnumber of clusters
+fviz_nbclust(safetynumbers, kmeans, method = "wss") + geom_vline(xintercept = 4, linetype = 2) + labs(subtitle = "Elbow method")
+```
+
+To find the ideal number of clusters, we plot the sum of square errors for each different number of clusters k. Using the elbow method, we choose a small value of k that still has a low SSE, and the elbow usually represents where the data has diminishing returns by increasing k.
+
+```{r Cluster Plot, echo=FALSE}
+safetyCluster <- kmeans(safetynumbers,4, nstart = 50)
+fviz_cluster(safetyCluster,safetynumbers, geom = "point", show.clust.cent = FALSE, ellipse.alpha = 0.1)
+```
+
+Using the optimal number of clusters, we run a k-means clustering algorithm and plot the resulting clusters. These clusters are interesting, as each cluster overlaps the cusp of another cluster.  
+
+## Conclusion
+
+Overall, the amount of crimes at a school in New York City are negatively correlated with the scores students received on the state Mathematics Exam. Through visual analysis and regression modeling, there is a distinct difference between schools with fewer than 3 crimes and schools with more when predicting the mean score on the math exam.
